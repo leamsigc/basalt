@@ -11,7 +11,7 @@
     }
   ],
   "engine": {
-    "max-context": 262144,
+    "max-context": 65536,
     "kv": "int8",
     "resident-experts": true,
     "ram-reserve-mib": 2048,
