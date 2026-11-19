@@ -6,9 +6,19 @@ One model at a time. Stop PolyStrata first if it is still installed on this mach
 
 ## Model and config
 
-One service only. The config is copied into the image by the Dockerfile. The model pack lives in the `basalt-models` named volume, mounted read-only at `/models`. That volume is populated once; Coolify redeploys reuse it, so the ~132 GB download is not repeated.
+One service only. The config is copied into the image by the Dockerfile. The model pack lives in the `basalt-models` named volume, mounted read-only at `/models`. That volume is populated once; Coolify redeploys reuse it, so the download is not repeated.
 
-Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB). To switch, change `"model"` in `basalt-data/basalt_config.json`, commit and redeploy, and put the new pack in the `basalt-models` volume.
+The deployed pack is `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB). It is chosen over NVFP4 for decode speed: on this same RTX PRO 4000, community rows show 188.6-201.8 tok/s for IQ3_XXS against 130.6 for NVFP4, and its 40 GiB of frames fit 64 GB RAM with room to spare. The cost is quality - i-quant is a lossier pack than NVFP4. The served API name is pinned by `"alias"` in the config, so clients do not depend on the pack's own metadata name.
+
+To put the pack in the volume on the host (once, before redeploy):
+
+```sh
+docker run --rm -v basalt-models:/models python:3.12-slim \
+  sh -c 'pip install --no-cache-dir -U huggingface_hub && \
+         hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-UD-IQ3_XXS.basalt --local-dir /models'
+```
+
+The previous NVFP4 pack (132 GB) can stay in the volume; an extra 87.6 GB of free volume space is needed.
 
 ## GO / NO-GO gate
 
@@ -16,10 +26,10 @@ Before pointing traffic at the pack, run it through the engine on this server:
 
 ```sh
 docker compose run --rm --entrypoint basalt-bench basalt --community \
-  --model /models/Qwen3.8-FN-NVFP4-DQ6_K.basalt --submitter NAME
+  --model /models/Qwen3.8-FN-UD-IQ3_XXS.basalt --submitter NAME
 ```
 
-`basalt-bench --community` refuses to write a row if any expert would be read from the SSD. On 64 GB RAM the NVFP4 pack (63.3 GiB of experts) is the one at risk; UD-IQ3_XXS (40 GiB of frames) is the safe pick. If the gate fails, free RAM or switch to UD-IQ3_XXS; do not deploy a pack that spills to disk.
+`basalt-bench --community` refuses to write a row if any expert would be read from the SSD. UD-IQ3_XXS (40 GiB of frames) is the safe pick on 64 GB RAM; the NVFP4 pack (63.3 GiB of experts) is the one at risk. Do not deploy a pack that spills to disk - with NVFP4 the gate would still pass on this machine, but it is the slower pack here.
 
 ## Coolify
 
