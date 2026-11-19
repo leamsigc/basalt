@@ -1,0 +1,37 @@
+# Coolify deployment for Basalt on one RTX PRO 4000 Blackwell (sm_120).
+# Coolify's proxy reaches the container over the exposed port; no host port mapping.
+services:
+  basalt:
+    build: .                      # use this repo's own Dockerfile
+    expose:
+      - "8080"
+    # The image ENTRYPOINT is:
+    #   basalt serve --config /data/basalt_config.json --host 0.0.0.0
+    # Append only the key; nothing else is overridden.
+    command: ["--api-key", "${BASALT_API_KEY:?BASALT_API_KEY must be set}"]
+    volumes:
+      - basalt-data:/data                            # config bind mount + HOME=/data: engine log and cache
+      - /opt/basalt-models:/models:ro                # host directory holding the .basalt pack (131.7 GB)
+      - ./basalt_config.json:/data/basalt_config.json:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1                                     # experts are page-locked in RAM
+    stop_grace_period: 90s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # The image has python3 but no curl.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health').status == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20m
+
+volumes:
+  basalt-data:

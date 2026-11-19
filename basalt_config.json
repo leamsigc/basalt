@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "models": [
+    {
+      "model": "/models/Qwen3.8-FN-NVFP4-DQ6_K.basalt",
+      "gpu": "0",
+      "parallel": 2,
+      "vision": "dynamic",
+      "fit-max-tokens": true
+    }
+  ],
+  "engine": {
+    "max-context": 262144,
+    "kv": "int8",
+    "resident-experts": true,
+    "ram-reserve-mib": 2048
+  },
+  "server": {
+    "port": 8080,
+    "allowed-host": ["REPLACE_WITH_YOUR_DOMAIN"]
+  }
+}
