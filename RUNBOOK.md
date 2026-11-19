@@ -33,10 +33,10 @@ basalt-bench --community --model /opt/basalt-models/Qwen3.8-FN-NVFP4-DQ6_K.basal
 3. Deploy, then verify:
 
 ```sh
-curl -s -H "Authorization: Bearer $KEY" https://<domain>/v1/models
+curl -s -H "Authorization: Bearer $KEY" https://sa5ofjawgf1p1ncibwts5qji.62.238.92.182.sslip.io/v1/models
 ```
 
-`KEY` is the value of `BASALT_API_KEY`; `<domain>` is the public domain.
+`KEY` is the value of `BASALT_API_KEY`.
 
 ## Exposure note
 

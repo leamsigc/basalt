@@ -17,6 +17,6 @@
   },
   "server": {
     "port": 8080,
-    "allowed-host": ["REPLACE_WITH_YOUR_DOMAIN"]
+    "allowed-host": ["sa5ofjawgf1p1ncibwts5qji.62.238.92.182.sslip.io"]
   }
 }
