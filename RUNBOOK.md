@@ -1,20 +1,23 @@
 # Basalt on Coolify - RTX PRO 4000 Blackwell (24 GB VRAM, 64 GB RAM)
 
-> Before deploy: edit `basalt_config.json` and replace `REPLACE_WITH_YOUR_DOMAIN` in `server.allowed-host` with the public domain Coolify's proxy sends as the `Host` header.
+> Before deploy: copy `basalt_config.json` from this repo to `/opt/basalt-config/basalt_config.json` on the Coolify host. The container reads that host copy; `allowed-host` is already set to the public domain Coolify's proxy sends as the `Host` header. Re-copy after any edit and redeploy.
 
 One model at a time. Stop PolyStrata first if it is still installed on this machine.
 
 ## Before the first start (on the host)
 
 ```sh
-mkdir -p /opt/basalt-models
+mkdir -p /opt/basalt-models /opt/basalt-config
+cp /path/to/cloned/basalt/basalt_config.json /opt/basalt-config/basalt_config.json
 pip install -U huggingface_hub
 hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-NVFP4-DQ6_K.basalt \
    --local-dir /opt/basalt-models
 ```
 
+The config bind mount is an absolute host path, not `./basalt_config.json`, so it does not depend on the directory Coolify runs Compose from. If that path did not exist at an earlier deploy, Docker created a *directory* there; remove it with `rmdir /opt/basalt-config/basalt_config.json` before copying the file.
+
 Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB), downloaded the same way.
-To use it instead, set `"model"` in `basalt_config.json` to `/models/Qwen3.8-FN-UD-IQ3_XXS.basalt` and redeploy.
+To use it instead, set `"model"` in `/opt/basalt-config/basalt_config.json` to `/models/Qwen3.8-FN-UD-IQ3_XXS.basalt` and redeploy.
 
 ## GO / NO-GO gate
 

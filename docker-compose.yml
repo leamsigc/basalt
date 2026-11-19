@@ -12,7 +12,7 @@ services:
     volumes:
       - basalt-data:/data                            # config bind mount + HOME=/data: engine log and cache
       - /opt/basalt-models:/models:ro                # host directory holding the .basalt pack (131.7 GB)
-      - ./basalt_config.json:/data/basalt_config.json:ro
+      - /opt/basalt-config/basalt_config.json:/data/basalt_config.json:ro  # host copy of this repo's basalt_config.json
     ulimits:
       memlock:
         soft: -1
