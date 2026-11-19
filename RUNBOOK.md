@@ -6,9 +6,9 @@ One model at a time. Stop PolyStrata first if it is still installed on this mach
 
 ## Model and config
 
-No host-side setup is needed. The config is copied into the image by the Dockerfile. The `model-fetch` service in `docker-compose.yml` downloads the pack into a named volume and exits; `basalt` waits for it with `depends_on: service_completed_successfully` and mounts that volume read-only at `/models`. The first deploy downloads ~132 GB; later deploys reuse the volume.
+One service only. The config is copied into the image by the Dockerfile. The model pack lives in the `basalt-models` named volume, mounted read-only at `/models`. That volume is populated once; Coolify redeploys reuse it, so the ~132 GB download is not repeated.
 
-Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB). To switch, change both `"model"` in `basalt-data/basalt_config.json` and the file name in `model-fetch`'s `command`, then commit and redeploy.
+Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB). To switch, change `"model"` in `basalt-data/basalt_config.json`, commit and redeploy, and put the new pack in the `basalt-models` volume.
 
 ## GO / NO-GO gate
 
