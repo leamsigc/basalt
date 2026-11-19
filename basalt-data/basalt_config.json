@@ -11,13 +11,13 @@
     }
   ],
   "engine": {
-    "max-context": 65536,
+    "max-context": 262144,
     "kv": "int8",
     "resident-experts": true,
     "ram-reserve-mib": 2048,
     "prefill-cpu-share": 0.3,
     "pool-affinity": "p-cores",
-    "relaxed-drafting": true
+    "relaxed-drafting": 0.2
   },
   "server": {
     "port": 8080,
