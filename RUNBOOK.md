@@ -4,26 +4,19 @@
 
 One model at a time. Stop PolyStrata first if it is still installed on this machine.
 
-## Before the first start (on the host)
+## Model and config
 
-```sh
-mkdir -p /opt/basalt-models
-pip install -U huggingface_hub
-hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-NVFP4-DQ6_K.basalt \
-   --local-dir /opt/basalt-models
-```
+No host-side setup is needed. The config is copied into the image by the Dockerfile. The `model-fetch` service in `docker-compose.yml` downloads the pack into a named volume and exits; `basalt` waits for it with `depends_on: service_completed_successfully` and mounts that volume read-only at `/models`. The first deploy downloads ~132 GB; later deploys reuse the volume.
 
-The config is copied into the image by the Dockerfile, so no config bind mount is involved. The Docker host still needs to see `/opt/basalt-models` for the model mount; if it cannot, point that mount at a host path Coolify can see.
-
-Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB), downloaded the same way.
-To use it instead, set `"model"` in `basalt-data/basalt_config.json`, commit and redeploy.
+Fallback pack: `Qwen3.8-FN-UD-IQ3_XXS.basalt` (87.6 GB). To switch, change both `"model"` in `basalt-data/basalt_config.json` and the file name in `model-fetch`'s `command`, then commit and redeploy.
 
 ## GO / NO-GO gate
 
 Before pointing traffic at the pack, run it through the engine on this server:
 
 ```sh
-basalt-bench --community --model /opt/basalt-models/Qwen3.8-FN-NVFP4-DQ6_K.basalt --submitter NAME
+docker compose run --rm --entrypoint basalt-bench basalt --community \
+  --model /models/Qwen3.8-FN-NVFP4-DQ6_K.basalt --submitter NAME
 ```
 
 `basalt-bench --community` refuses to write a row if any expert would be read from the SSD. On 64 GB RAM the NVFP4 pack (63.3 GiB of experts) is the one at risk; UD-IQ3_XXS (40 GiB of frames) is the safe pick. If the gate fails, free RAM or switch to UD-IQ3_XXS; do not deploy a pack that spills to disk.

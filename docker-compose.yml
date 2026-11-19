@@ -1,8 +1,25 @@
 # Coolify deployment for Basalt on one RTX PRO 4000 Blackwell (sm_120).
 # Coolify's proxy reaches the container over the exposed port; no host port mapping.
 services:
+  # One-shot: fills the model volume on a fresh deploy, then exits. A later
+  # deploy reuses the volume, so the ~132 GB download happens only once.
+  model-fetch:
+    image: python:3.12-slim
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        if [ -s /models/Qwen3.8-FN-NVFP4-DQ6_K.basalt ]; then exit 0; fi
+        pip install --no-cache-dir -U huggingface_hub
+        hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-NVFP4-DQ6_K.basalt --local-dir /models
+    volumes:
+      - basalt-models:/models
+
   basalt:
     build: .                      # use this repo's own Dockerfile
+    depends_on:
+      model-fetch:
+        condition: service_completed_successfully
     expose:
       - "8080"
     # The image ENTRYPOINT is:
@@ -10,12 +27,12 @@ services:
     # Append only the key; nothing else is overridden.
     command: ["--api-key", "${BASALT_API_KEY:?BASALT_API_KEY must be set}"]
     volumes:
-      - /opt/basalt-models:/models:ro                # host directory holding the .basalt pack (131.7 GB)
+      - basalt-models:/models:ro                 # filled by model-fetch, no host path needed
     # /data is baked into the image (basalt_config.json + HOME=/data for log/cache).
     ulimits:
       memlock:
         soft: -1
-        hard: -1                                     # experts are page-locked in RAM
+        hard: -1                                 # experts are page-locked in RAM
     stop_grace_period: 90s
     deploy:
       resources:
@@ -31,3 +48,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20m
+
+volumes:
+  basalt-models:
