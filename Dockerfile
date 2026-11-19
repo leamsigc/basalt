@@ -69,6 +69,10 @@ COPY --from=builder /opt/basalt/LICENSE \
                   /opt/basalt/THIRD_PARTY_LICENSES \
                   /opt/basalt/
 
+# The deploy platform resolves relative bind mounts in its own filesystem, so
+# serve the config from the image instead of a host mount. No secret lives here.
+COPY basalt-data/basalt_config.json /data/basalt_config.json
+
 ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/basalt/bin:$PATH

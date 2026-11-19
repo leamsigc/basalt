@@ -10,8 +10,8 @@ services:
     # Append only the key; nothing else is overridden.
     command: ["--api-key", "${BASALT_API_KEY:?BASALT_API_KEY must be set}"]
     volumes:
-      - ./basalt-data:/data                          # basalt_config.json + HOME=/data: engine log and cache
       - /opt/basalt-models:/models:ro                # host directory holding the .basalt pack (131.7 GB)
+    # /data is baked into the image (basalt_config.json + HOME=/data for log/cache).
     ulimits:
       memlock:
         soft: -1
