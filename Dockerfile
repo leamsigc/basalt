@@ -19,12 +19,11 @@
 # sidecar beside itself. The top directory is the same fixed path in both stages
 # because the venv's own scripts name it absolutely.
 #
-# Mounts:
-#   /data    basalt_config.json (v2; tools/migrations/config_v1_to_v2.py converts
-#            an older file) and, since HOME is pinned there, the server's folder
-#            per model under ~/.cache/basalt: its engine log and, when the
-#            conversation disk tier is on, that tier
-#   /models  the .basalt model files
+# Data layout:
+#   /data    basalt_config.json is baked into the image; HOME is pinned here, so
+#            the server's folder per model under ~/.cache/basalt holds the engine
+#            log and, when the conversation disk tier is on, that tier
+#   /models  the .basalt model files, from the named volume filled by model-fetch
 
 ARG CUDA_TAG=13.4.3
 
@@ -77,10 +76,10 @@ ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/basalt/bin:$PATH
 
-# Serve the config from the /data mount, bound to 0.0.0.0 so a mapped port
-# reaches the server (loopback is the built-in default). Arguments given after
-# the image name follow the entrypoint, e.g. --api-key KEY. The served port is
-# server.port (8080) and the host mapping has to match it.
+# Serve the config baked into /data, bound to 0.0.0.0 so the proxy reaches the
+# server (loopback is the built-in default). Arguments given after the image name
+# follow the entrypoint, e.g. --api-key KEY. The served port is server.port (8080);
+# no host port mapping is needed behind a proxy.
 EXPOSE 8080
 
 ENTRYPOINT ["basalt", "serve", "--config", "/data/basalt_config.json", "--host", "0.0.0.0"]
