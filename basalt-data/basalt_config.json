@@ -7,7 +7,12 @@
       "gpu": "0",
       "parallel": 2,
       "vision": "dynamic",
-      "reasoning-budget-tokens": 4096
+      "reasoning-effort": "low",
+      "reasoning-budget-tokens": 0,
+      "temperature": 1.0,
+      "top-p": 1.0,
+      "top-k": 0,
+      "min-p": 0.0
     }
   ],
   "engine": {
