@@ -5,13 +5,16 @@
 #include "../serve/session_engine.hpp"
 
 #include "basalt/artifact/gguf_reader.hpp"
+#include "basalt/core/diag.hpp"
 #include "basalt/core/model_file.hpp"
 #include "basalt/core/shipped_profiles.hpp"
 #include "basalt/log.hpp"
 #include "basalt/model/adapter.hpp"
+#include "basalt/model/batch_check.hpp"
 #include "basalt/platform/file.hpp"
 #include "basalt/platform/process.hpp"
 #include "basalt/program/options.hpp"
+#include "basalt/kernels/sampler.hpp"
 #include "basalt/protocol.hpp"
 #include <cuda_runtime.h>
 #include <chrono>
@@ -42,8 +45,19 @@ std::string profile_key(const basalt::core::Json& meta) {
     const basalt::core::Json* kv = meta.get("gguf_kv");
     const basalt::core::Json* arch = kv ? kv->get("general.architecture") : nullptr;
     if (arch == nullptr || !arch->is_string() || arch->s.empty()) return {};
-    const basalt::core::Json* nl = kv->get(arch->s + ".block_count");
-    const basalt::core::Json* ne = kv->get(arch->s + ".expert_count");
+    // the counts under the architecture's own prefix, or under the one other prefix a converter wrote them with
+    std::string prefix = arch->s;
+    if (kv->get(prefix + ".block_count") == nullptr) {
+        prefix.clear();
+        for (const auto& [name, v] : kv->members) {
+            const size_t at = name.size() > 12 ? name.size() - 12 : std::string::npos;
+            if (at == std::string::npos || name.compare(at, 12, ".block_count") != 0) continue;
+            if (!prefix.empty()) return {};
+            prefix = name.substr(0, at);
+        }
+    }
+    const basalt::core::Json* nl = kv->get(prefix + ".block_count");
+    const basalt::core::Json* ne = kv->get(prefix + ".expert_count");
     if (nl == nullptr || ne == nullptr || nl->type != T::Int || ne->type != T::Int || nl->neg || ne->neg) return {};
     return arch->s + "-" + std::to_string(nl->u64()) + "x" + std::to_string(ne->u64());
 }
@@ -77,7 +91,8 @@ struct AdapterTimes {
 /// read, the reused positions counted as read and left out of the speed.
 bool adapter_prompt(basalt::model::ModelSession& sess, const std::vector<int32_t>& toks,
                     const std::vector<AdapterImage>& images, int32_t& next, int64_t& pos, AdapterTimes& tm,
-                    std::string& err, float* logits = nullptr, size_t reuse = 0, bool report = false) {
+                    std::string& err, float* logits = nullptr, size_t reuse = 0, bool report = false,
+                    const basalt::kernels::SamplerParams* sampling = nullptr) {
     const auto t0 = Clock::now();
     pos = (int64_t) reuse;
     int64_t total = (int64_t) toks.size();
@@ -157,6 +172,7 @@ bool adapter_prompt(basalt::model::ModelSession& sess, const std::vector<int32_t
         dr.n_tokens = 1;
         dr.pos = pos;
         dr.next_token = &next;
+        dr.sampling = sampling;   // the first token is draw 0
         std::vector<float> diag_row;
         if (g_diag_logits && logits == nullptr) {
             diag_row.resize((size_t) g_n_vocab);
@@ -176,11 +192,12 @@ bool adapter_prompt(basalt::model::ModelSession& sess, const std::vector<int32_t
 
 }  // namespace
 
-// The CLI path of a session model: greedy decode of a pre-tokenized prompt, one `T <id>` line per token.
+// The CLI path of a session model: decode (greedy unless `sampling` says otherwise) of a pre-tokenized prompt, one `T <id>` line per token.
 // Each --image's embedding block goes before the prompt token at its --image-at index.
 int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_t>& prompt, int64_t max_new,
                             const std::vector<int64_t>& stop_ids, const std::vector<std::string>& images,
-                            const std::vector<int64_t>& image_at, const std::vector<int64_t>& oracle, bool teacher) {
+                            const std::vector<int64_t>& image_at, const std::vector<int64_t>& oracle, bool teacher,
+                     const basalt::kernels::SamplerParams& sampling) {
     if (images.size() != image_at.size()) {
         basalt::log::error("basalt generate", "every --image needs an --image-at");
         return 2;
@@ -211,7 +228,7 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
     AdapterTimes tm;
     std::string err;
     const auto t0 = Clock::now();
-    if (!adapter_prompt(*sess, toks, blocks, next, pos, tm, err)) {
+    if (!adapter_prompt(*sess, toks, blocks, next, pos, tm, err, nullptr, 0, false, &sampling)) {
         basalt::log::error("basalt generate", "%s", err.c_str());
         return 1;
     }
@@ -221,7 +238,9 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
     std::vector<int32_t> window((size_t) cap), rows((size_t) cap), drafts((size_t) cap);
     std::vector<float> conf((size_t) cap);
     std::vector<float> diag_rows;
+    basalt::kernels::SamplerParams window_sp = sampling;
     int64_t made = 0, windows = 0, offered = 0, accepted = 0, differ = 0;
+    std::vector<int64_t> offered_at((size_t) cap, 0), accepted_at((size_t) cap, 0);   // by draft position (1 = the first draft)
     double ms_draft = 0, ms_verify = 0;
     bool stop = false;
     const auto emit = [&](int32_t tok) {
@@ -242,7 +261,15 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
             }
         } else if (cap > 1) {
             basalt::model::Result dres = sess->draft_begin(next, pos, cap - 1);
-            if (dres.ok()) dres = sess->draft_end(drafts.data(), conf.data(), cap - 1, n_draft);
+            if (dres.ok()) dres = sess->draft_end(drafts.data(), conf.data(), cap - 1, n_draft, {});   // a fixed window verifies every draft
+            if (dres.ok() && !basalt::core::diagnostics().draft_log.empty()) {   // --draft-log: the position, the anchor and the drafts of each window
+                if (std::FILE* f = std::fopen(basalt::core::diagnostics().draft_log.c_str(), "a")) {
+                    std::fprintf(f, "D %lld %d", (long long) pos, next);
+                    for (int i = 0; i < n_draft; ++i) std::fprintf(f, " %d/%.3f", drafts[(size_t) i], (double) conf[(size_t) i]);
+                    std::fputc('\n', f);
+                    std::fclose(f);
+                }
+            }
             if (!dres.ok() && dres.status != basalt::model::Status::NotImplemented) {
                 basalt::log::error("basalt generate", "%s", dres.message.c_str());
                 return 1;
@@ -256,6 +283,8 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
         dr.tokens = window.data();
         dr.n_tokens = T;
         dr.pos = pos;
+        dr.sampling = &window_sp;
+        window_sp.counter = (uint64_t) made;   // row 0 draws token number `made`, so a seed gives one text at any window
         (T > 1 ? dr.row_tokens : dr.next_token) = rows.data();
         if (g_diag_logits) {
             diag_rows.resize((size_t) cap * (size_t) g_n_vocab);
@@ -274,6 +303,10 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
         ++windows;
         offered += T - 1;
         accepted += a;
+        for (int k = 0; k < T - 1; ++k) {
+            ++offered_at[(size_t) k];
+            accepted_at[(size_t) k] += k < a;
+        }
         if (g_diag_logits) std::fwrite(diag_rows.data(), sizeof(float), (size_t) (teacher ? T : a + 1) * (size_t) g_n_vocab, g_diag_logits);
         if (teacher) {
             // the expected text goes on whatever the picks: every row runs, and each pick that differs is counted
@@ -297,6 +330,12 @@ int adapter_generate(basalt::model::ModelSession* sess, const std::vector<int64_
     basalt::log::info("basalt generate", "prompt %.0f ms, %lld tokens in %.0f ms",
                  std::chrono::duration<double, std::milli>(t1 - t0).count(), (long long) made,
                  std::chrono::duration<double, std::milli>(t2 - t1).count());
+    if (cap > 1) {
+        std::string by;
+        for (int k = 0; k + 1 < cap && offered_at[(size_t) k] > 0; ++k)
+            by += (k ? " " : "") + std::to_string(accepted_at[(size_t) k]) + "/" + std::to_string(offered_at[(size_t) k]);
+        basalt::log::info("basalt generate", "drafts accepted by position: %s", by.c_str());
+    }
     if (cap > 1)
         basalt::log::info("basalt generate", "windows %lld of %.2f tokens: %lld of %lld drafts accepted, %lld picks differ from the oracle; draft %.2f ms, verify %.2f ms per window",
                           (long long) windows, windows ? (double) (accepted + windows) / (double) windows : 0.0, (long long) accepted,
@@ -362,20 +401,43 @@ int run_session_model(basalt::program::CommonOptions& o, const basalt::model::Mo
         lreq.diag_tier_frozen = o.diag_tier_frozen;
         lreq.kv = o.kv;
         lreq.rope = o.rope;
+        lreq.route = o.route;
         lreq.kv_resident = o.kv_resident;
         lreq.card_gbps.push_back(o.main_gbps);
         lreq.card_gbps.insert(lreq.card_gbps.end(), o.peer_gbps.begin(), o.peer_gbps.end());
         lreq.diag_split_at = o.diag_split_at;
+        lreq.diag_rows = o.diag_rows;
         const basalt::model::Result r = adapter->start(lreq, started);
         if (!r.ok() || started.sessions.empty()) return fatal_start_error(r.message);
         std::vector<int64_t> stop;
         if (o.stop_eos) stop = o.eos_ids;
         if (started.model->context() != 0) o.max_context = started.model->context();
         if (o.serve) return basalt::program::serve::run_session(o, model_file, *adapter, started);
+        if (o.diag_batch_check) {   // every session's windows alone against the same windows batched, bitwise
+            std::vector<basalt::model::ModelSession*> ss;
+            for (auto& s : started.sessions) ss.push_back(s.get());
+            const std::vector<int32_t> prompt(o.tokens.begin(), o.tokens.end());
+            basalt::model::BatchCheck bc;
+            const basalt::model::Result r = basalt::model::check_batch(ss.data(), (int) ss.size(), prompt, (int) std::max<int64_t>(o.max_new, 4),
+                                                                       started.model->desc().n_vocab, bc);
+            std::printf("%s", bc.report.c_str());
+            if (!r.ok()) return fatal_start_error(r.message);
+            std::printf("batch check: %d windows compared, %d differ: %s\n", bc.compared, bc.differ, bc.differ ? "FAILED" : "PASSED");
+            return bc.differ ? 1 : 0;
+        }
         std::vector<int64_t> oracle;
         if (const auto code = cli::load_spec_oracle(o.spec_oracle, oracle)) return *code;
         if (o.diag_teacher && oracle.empty()) return fatal_start_error("--diag-teacher needs --spec-oracle");
-        return adapter_generate(started.sessions.front().get(), o.tokens, o.max_new, stop, o.images, o.image_at, oracle, o.diag_teacher);
+        basalt::kernels::SamplerParams sampler;   // --seed S samples with Philox; no seed, or temperature 0, is greedy
+        sampler.greedy = o.greedy || o.temperature <= 0.0f;
+        sampler.seed = o.seed;
+        sampler.top_k = o.top_k;
+        sampler.top_p = o.top_p;
+        sampler.temperature = sampler.greedy ? 0.0f : o.temperature;
+        sampler.draw_drafts = false;   // the reply follows the seed at any window (sampler.hpp)
+        if (sampler.greedy) basalt::log::info("basalt generate", "sampling greedy");
+        else basalt::log::info("basalt generate", "sampling temperature=%g top_k=%d top_p=%g seed=%llu", (double) sampler.temperature, sampler.top_k, (double) sampler.top_p, (unsigned long long) sampler.seed);
+        return adapter_generate(started.sessions.front().get(), o.tokens, o.max_new, stop, o.images, o.image_at, oracle, o.diag_teacher, sampler);
     } catch (const std::exception& e) {
         return fatal_start_error(e.what());
     }

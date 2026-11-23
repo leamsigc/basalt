@@ -57,9 +57,20 @@ void pack_tokens(const model::ModelAdapter& adapter, CommonOptions& o) {
         basalt::log::warn("basalt", "the pack's vocabulary cannot be read (%s): no end-of-turn or turn token", err.c_str());
         return;
     }
+    // a name with one `*` matches the first token whose text has that start and end (a model whose special tokens carry a suffix
+    // that differs between its files)
     auto id_of = [&](const std::string& name) -> int64_t {
-        const basalt::core::Json* v = vocab.get(name);
-        return v != nullptr ? (int64_t) v->u64() : -1;
+        const size_t star = name.find('*');
+        if (star == std::string::npos) {
+            const basalt::core::Json* v = vocab.get(name);
+            return v != nullptr ? (int64_t) v->u64() : -1;
+        }
+        const std::string head = name.substr(0, star), tail = name.substr(star + 1);
+        for (const auto& [text, v] : vocab.members)
+            if (text.size() >= head.size() + tail.size() && text.compare(0, head.size(), head) == 0 &&
+                text.compare(text.size() - tail.size(), tail.size(), tail) == 0)
+                return (int64_t) v.u64();
+        return -1;
     };
     const model::TokenNames names = adapter.token_names();
     if (o.eos_ids.empty())
@@ -96,6 +107,8 @@ std::optional<int> start(int argc, char** argv, std::unique_ptr<CommonOptions>& 
     if (adapter != nullptr) {
         o.arch = adapter->arch();
         o.model_name = adapter->model_name();
+        o.community_kv = adapter->community_kv();
+        o.community_quant = adapter->community_quant();
         o.quality_flags = adapter->quality_flags();
         o.quality_window = adapter->quality_window();
     }
@@ -109,6 +122,7 @@ std::optional<int> start(int argc, char** argv, std::unique_ptr<CommonOptions>& 
             return 2;
         }
         basalt::program::grammar::set_tool_form(adapter->tool_form());
+        basalt::program::grammar::set_reply_form(adapter->reply_form());
     }
     // Batched serving reads a prompt on its own thread while verify windows run.  A lazy kernel load on that thread
     // synchronizes the context and can wait on a window kernel that waits on the load, so batched serving loads every
