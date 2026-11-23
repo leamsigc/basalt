@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "models": [
+    {
+      "model": "/models/Qwen3.8-FN-UD-IQ3_XXS.basalt",
+      "alias": "Qwen3.8-Flash-Next UD-IQ3_XXS",
+      "gpu": "0",
+      "parallel": 1,
+      "vision": "dynamic",
+      "reasoning-budget-tokens": 4096
+    }
+  ],
+  "engine": {
+    "max-context": 262144,
+    "kv": "int8",
+    "resident-experts": true,
+    "ram-reserve-mib": 2048,
+    "prefill-cpu-share": 0.3,
+    "pool-affinity": "p-cores",
+    "relaxed-drafting": 0.2
+  },
+  "server": {
+    "port": 8080,
+    "allowed-host": ["sa5ofjawgf1p1ncibwts5qji.62.238.92.182.sslip.io"]
+  }
+}
