@@ -6,8 +6,7 @@
       "alias": "Qwen3.8-Flash-Next UD-IQ3_XXS",
       "gpu": "0",
       "parallel": 1,
-      "vision": "dynamic",
-      "reasoning-budget-tokens": 4096
+      "vision": "dynamic"
     }
   ],
   "engine": {
@@ -21,6 +20,8 @@
   },
   "server": {
     "port": 8080,
-    "allowed-host": ["sa5ofjawgf1p1ncibwts5qji.62.238.92.182.sslip.io"]
+    "allowed-host": [
+      "sa5ofjawgf1p1ncibwts5qji.62.238.92.182.sslip.io"
+    ]
   }
 }
